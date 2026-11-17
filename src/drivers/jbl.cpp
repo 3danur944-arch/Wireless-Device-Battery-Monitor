@@ -7,6 +7,11 @@
 //                         [feature lo][feature hi][size lo][size hi][value...]
 //            status bit 15 set = error
 // Battery = feature 000D, one byte: bit 7 charging, bits 0..6 percent.
+// JBL Quantum 350 Wireless (VID 0ECB, PID 206B, 2.4 GHz dongle) is NOT a HIDV3 device: its HID interface 3
+// (usage 0001:0000, 64-byte feature reports) has no FF12 collection. A USB capture of JBL QuantumENGINE
+// showed the battery as numbered feature report 0x49 (GET_REPORT, 2 bytes: [49][percent]); the headset also
+// pushes input report 0x08 = [08][percent] when it connects (0x4B = 75 % in both, matching the app).
+// Whether bit 7 means "charging" on this model is not verified; it follows the HIDV3 convention.
 // Read from JBL QuantumENGINE 2.9.4 (HIDV3Device / PowerFeature.Battery.HIDV3Left) and checked
 // against a Quantum 650 Wireless on its 2.4 GHz dongle; the other models use the same code path there.
 #include "drivers.h"
@@ -49,6 +54,46 @@ bool GetBattery(HidDev& d, BYTE& info) {
     return false;
 }
 
+
+// Quantum 350 Wireless: battery = numbered feature report 0x49 on the HID interface (see the header comment).
+constexpr USHORT kQuantum350Pid = 0x206B;
+constexpr BYTE kQuantum350BatteryReport = 0x49;
+
+bool GetBattery350(HidDev& d, int& percent, bool& charging) {
+    std::vector<BYTE> r;
+    if (!d.GetFeature(kQuantum350BatteryReport, r) || r.size() < 2 || r[0] != kQuantum350BatteryReport) return false;
+    int v = r[1];
+    charging = false;
+    if (v > 100) {  // bit 7 as a charging flag (unverified), like the HIDV3 models
+        charging = (v & 0x80) != 0;
+        v &= 0x7F;
+    }
+    if (v > 100) return false;
+    percent = v;
+    return true;
+}
+
+void PollJblQuantum350(PollContext& ctx) {
+    if (ctx.IsClaimed(kVid, kQuantum350Pid)) return;
+    // Feature-report access only, so QuantumENGINE running at the same time is not disturbed.
+    for (const HidColl* c : ctx.Find(kVid, kQuantum350Pid, [](const HidColl& c) { return c.featLen() >= 2; })) {
+        HidDev d;
+        if (!d.OpenFeatureOnly(*c)) continue;
+        int percent = 0;
+        bool charging = false;
+        if (!GetBattery350(d, percent, charging)) continue;
+        DeviceStatus s;
+        s.key = L"jbl:" + Hex4(kQuantum350Pid);
+        s.name = L"JBL Quantum 350 Wireless";
+        s.kind = DeviceKind::Headset;
+        s.via = L"2.4 GHz receiver";
+        s.percent = percent;
+        s.charging = charging;
+        ctx.Add(s, kVid, kQuantum350Pid);
+        break;
+    }
+}
+
 }  // namespace
 
 void PollJbl(PollContext& ctx) {
@@ -72,4 +117,5 @@ void PollJbl(PollContext& ctx) {
             break;
         }
     }
+    PollJblQuantum350(ctx);
 }
