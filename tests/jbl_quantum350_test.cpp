@@ -9,7 +9,7 @@
 namespace {
 std::vector<BYTE> reply;
 bool featureOk = true, openOk = true;
-int opens = 0, gets = 0;
+int opens = 0, getCalls = 0;
 
 HidColl Collection(USHORT page, USHORT usage, USHORT in, USHORT feat) {
     HidColl c;
@@ -25,7 +25,7 @@ HidColl Collection(USHORT page, USHORT usage, USHORT in, USHORT feat) {
 }
 
 PollContext Context() {
-    opens = gets = 0;
+    opens = getCalls = 0;
     featureOk = openOk = true;
     reply = { 0x49, 0x4B };
     PollContext ctx;
@@ -46,7 +46,7 @@ void HidDev::Flush() {}
 bool HidDev::SetFeature(const std::vector<BYTE>&) { assert(false); return false; }  // read-only driver
 int HidDev::Read(std::vector<BYTE>&, int) { assert(false); return -1; }
 bool HidDev::GetFeature(BYTE reportId, std::vector<BYTE>& out) {
-    ++gets;
+    ++getCalls;
     assert(reportId == 0x49);
     out.assign(c_.featLen(), 0);  // the real layer pads to the feature report length
     for (size_t i = 0; i < reply.size() && i < out.size(); ++i) out[i] = reply[i];
@@ -66,9 +66,9 @@ int main() {
     assert(s.key == L"jbl:206B" && s.name == L"JBL Quantum 350 Wireless");
     assert(s.kind == DeviceKind::Headset && s.via == L"2.4 GHz receiver");
     assert(s.percent == 75 && !s.charging && s.connected && !s.asleep);
-    assert(opens == 1 && gets == 1);
+    assert(opens == 1 && getCalls == 1);
     PollJbl(ctx);
-    assert(gets == 1 && ctx.out.size() == 1);  // already claimed
+    assert(getCalls == 1 && ctx.out.size() == 1);  // already claimed
 
     ctx = Context();
     reply = { 0x49, 100 };
@@ -96,17 +96,17 @@ int main() {
     ctx = Context();
     featureOk = false;
     PollJbl(ctx);
-    assert(ctx.out.empty() && ctx.claimed.empty() && gets == 1);
+    assert(ctx.out.empty() && ctx.claimed.empty() && getCalls == 1);
     ctx = Context();
     openOk = false;
     PollJbl(ctx);
-    assert(ctx.out.empty() && ctx.claimed.empty() && gets == 0);
+    assert(ctx.out.empty() && ctx.claimed.empty() && getCalls == 0);
 
     // A different product id of the same vendor is not touched.
     ctx = Context();
     for (auto& c : ctx.colls) c.pid = 0x2125;
     PollJbl(ctx);
-    assert(ctx.out.empty() && opens == 0 && gets == 0);
+    assert(ctx.out.empty() && opens == 0 && getCalls == 0);
 
     std::puts("jbl_quantum350_test: ok");
     return 0;
